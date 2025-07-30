@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  pr-reviewer:
+    build: .
+    volumes:
+      # Mount cache directory for persistence
+      - pr_reviewer_cache:/cache
+      # Mount current directory for output files
+      - .:/app/output
+    environment:
+      - PR_REVIEWER_CACHE_DIR=/cache
+    env_file:
+      - .env
+    command: ["--help"]
+
+volumes:
+  pr_reviewer_cache:

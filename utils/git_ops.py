@@ -13,10 +13,13 @@ import sys
 class GitOps:
     """Git operations wrapper for diff generation."""
     
-    def __init__(self, repo_path: Optional[str] = None):
-        """Initialize GitOps with optional repository path."""
+    def __init__(self, repo_path: Optional[str] = None, github_token: Optional[str] = None):
+        """Initialize GitOps with optional repository path and GitHub token."""
         self.repo_path = repo_path or os.getcwd()
-        self.repo_cache_dir = os.path.join(os.path.expanduser("~"), ".pr_reviewer_cache")
+        self.github_token = github_token
+        # Use environment variable for cache directory (Docker compatibility)
+        self.repo_cache_dir = os.getenv('PR_REVIEWER_CACHE_DIR', 
+                                       os.path.join(os.path.expanduser("~"), ".pr_reviewer_cache"))
         os.makedirs(self.repo_cache_dir, exist_ok=True)
     
     def get_cached_repo_path(self, repo_name: str) -> str:
@@ -30,16 +33,25 @@ class GitOps:
         cached_path = self.get_cached_repo_path(repo_name)
         return os.path.exists(cached_path) and self.is_git_repo(cached_path)
     
+    def get_authenticated_repo_url(self, repo_name: str) -> str:
+        """Get authenticated repository URL using GitHub token."""
+        if self.github_token:
+            return f"https://{self.github_token}@github.com/{repo_name}.git"
+        else:
+            return f"https://github.com/{repo_name}.git"
+    
     def clone_or_update_repository(self, repo_url: str, repo_name: str) -> str:
         """Clone a repository or update existing one."""
         cached_path = self.get_cached_repo_path(repo_name)
         
         if self.is_repo_cached(repo_name):
-            print(f"Repository already cached at {cached_path}, updating...")
+            print(f"Repository already cached at {cached_path}, checking for updates...")
             return self.update_cached_repository(cached_path, repo_name)
         else:
             print(f"Cloning repository to {cached_path}...")
-            return self.clone_repository_to_path(repo_url, cached_path)
+            # Use authenticated URL for cloning
+            auth_repo_url = self.get_authenticated_repo_url(repo_name)
+            return self.clone_repository_to_path(auth_repo_url, cached_path)
     
     def clone_repository_to_path(self, repo_url: str, target_path: str) -> str:
         """Clone a repository to a specific path."""
@@ -61,11 +73,31 @@ class GitOps:
         except subprocess.CalledProcessError as e:
             print(f"Error cloning repository: {e}")
             print(f"stderr: {e.stderr}")
+            if "could not read Username" in e.stderr or "Authentication failed" in e.stderr:
+                print("This appears to be a private repository. Please ensure your GitHub token has 'repo' permissions.")
             sys.exit(1)
     
     def update_cached_repository(self, repo_path: str, repo_name: str) -> str:
         """Update an existing cached repository."""
         try:
+            # Configure git to use token for authentication if available
+            if self.github_token:
+                subprocess.run(
+                    ["git", "config", "credential.helper", "store"],
+                    cwd=repo_path, 
+                    check=True, 
+                    capture_output=True
+                )
+                
+                # Set up credential helper to use token
+                credential_url = f"https://{self.github_token}@github.com"
+                subprocess.run(
+                    ["git", "config", "credential.helper", f"!echo 'username={self.github_token}'; echo 'password={self.github_token}'"],
+                    cwd=repo_path, 
+                    check=True, 
+                    capture_output=True
+                )
+            
             # Fetch all branches and tags
             subprocess.run(
                 ["git", "fetch", "--all", "--tags"], 
@@ -74,30 +106,43 @@ class GitOps:
                 capture_output=True
             )
             
-            # Reset to match remote
-            subprocess.run(
-                ["git", "reset", "--hard", "origin/main"], 
+            # Check if we need to update (compare local and remote)
+            result = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD..origin/main"],
                 cwd=repo_path, 
-                check=True, 
-                capture_output=True
+                capture_output=True, 
+                text=True
             )
             
-            # Clean untracked files
-            subprocess.run(
-                ["git", "clean", "-fd"], 
-                cwd=repo_path, 
-                check=True, 
-                capture_output=True
-            )
+            if result.returncode == 0 and result.stdout.strip() != "0":
+                print(f"Repository is {result.stdout.strip()} commits behind, updating...")
+                # Reset to match remote
+                subprocess.run(
+                    ["git", "reset", "--hard", "origin/main"], 
+                    cwd=repo_path, 
+                    check=True, 
+                    capture_output=True
+                )
+                
+                # Clean untracked files
+                subprocess.run(
+                    ["git", "clean", "-fd"], 
+                    cwd=repo_path, 
+                    check=True, 
+                    capture_output=True
+                )
+                
+                print(f"Repository updated at {repo_path}")
+            else:
+                print(f"Repository is up to date at {repo_path}")
             
-            print(f"Repository updated at {repo_path}")
             return repo_path
         except subprocess.CalledProcessError as e:
             print(f"Error updating repository: {e}")
             # If update fails, try to re-clone
             print("Update failed, re-cloning repository...")
-            repo_url = f"https://github.com/{repo_name}.git"
-            return self.clone_repository_to_path(repo_url, repo_path)
+            auth_repo_url = self.get_authenticated_repo_url(repo_name)
+            return self.clone_repository_to_path(auth_repo_url, repo_path)
     
     def fetch_and_checkout(self, repo_path: str, branch: str) -> bool:
         """Fetch and checkout a specific branch."""

@@ -24,19 +24,29 @@ Examples:
   python main.py 123
   python main.py 456 --output-dir ./reviews
   python main.py 789 --include-comments --include-review-comments
+  python main.py --pr 123
+  python main.py --pr 456 --output-dir ./reviews
         """
     )
     
+    # Support both positional and --pr argument for Docker compatibility
     parser.add_argument(
         'pr_number',
+        nargs='?',
         type=int,
-        help='Pull request number'
+        help='Pull request number (can also use --pr)'
+    )
+    
+    parser.add_argument(
+        '--pr',
+        type=int,
+        help='Pull request number (alternative to positional argument)'
     )
     
     parser.add_argument(
         '--output-dir',
-        default='.',
-        help='Output directory for review files (default: current directory)'
+        default='./reviews',
+        help='Output directory for review files (default: ./reviews)'
     )
     
     parser.add_argument(
@@ -70,6 +80,15 @@ def main():
     """Main function."""
     args = parse_arguments()
     
+    # Determine PR number from either positional argument or --pr flag
+    pr_number = args.pr or args.pr_number
+    if pr_number is None:
+        print("Error: PR number is required. Use either positional argument or --pr flag.")
+        print("Examples:")
+        print("  python main.py 123")
+        print("  python main.py --pr 123")
+        sys.exit(1)
+    
     try:
         # Load configuration
         print("Loading configuration...")
@@ -92,8 +111,8 @@ def main():
             sys.exit(1)
         
         # Get PR data
-        print(f"Fetching PR #{args.pr_number} from {config.repository}...")
-        pr = github_api.get_pull_request(config.repository, args.pr_number)
+        print(f"Fetching PR #{pr_number} from {config.repository}...")
+        pr = github_api.get_pull_request(config.repository, pr_number)
         metadata = github_api.extract_pr_metadata(pr)
         
         print(f"PR Title: {metadata['title']}")
@@ -121,7 +140,8 @@ def main():
         
         if not args.skip_diff:
             print("Setting up repository for diff generation...")
-            git_ops = GitOps()
+            # Pass GitHub token to GitOps for authenticated access
+            git_ops = GitOps(github_token=config.github_token)
             
             # Clean cache if requested
             if args.clean_cache:
@@ -162,7 +182,7 @@ def main():
         print("Writing review file...")
         output_file = file_writer.write_review_file(
             repo_name=config.repository,
-            pr_number=args.pr_number,
+            pr_number=pr_number,
             metadata=metadata,
             diff_content=diff_content,
             diff_stats=diff_stats,

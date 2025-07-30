@@ -10,8 +10,11 @@ A local CLI tool that automates personal code reviews by extracting GitHub PR me
 - Configurable via environment variables
 - **Smart repository caching** - clones once, reuses and updates
 - **Repository configuration** - set once in environment variables
+- **Docker support** - portable and disposable execution
 
 ## Installation
+
+### Option 1: Local Installation
 
 1. Clone this repository
 2. Install dependencies:
@@ -19,6 +22,15 @@ A local CLI tool that automates personal code reviews by extracting GitHub PR me
    pip install -r requirements.txt
    ```
 3. Set up environment variables (see Configuration section)
+
+### Option 2: Docker Installation (Recommended)
+
+1. Clone this repository
+2. Set up environment variables (see Configuration section)
+3. Build the Docker image:
+   ```bash
+   docker build -t local-pr-reviewer .
+   ```
 
 ## Configuration
 
@@ -38,9 +50,16 @@ GITHUB_REPOSITORY=owner/repo
 
 ### Repository Caching
 
-The tool automatically caches repositories in `~/.pr_reviewer_cache/` to avoid re-cloning. Repositories are updated automatically on each run.
+The tool automatically caches repositories to avoid re-cloning:
+
+- **Local**: `~/.pr_reviewer_cache/`
+- **Docker**: `/cache` (persistent volume)
+
+Repositories are updated automatically on each run.
 
 ## Usage
+
+### Local Usage
 
 ```bash
 python main.py <pr_number>
@@ -65,6 +84,34 @@ python main.py 123 --skip-diff
 python main.py 123 --clean-cache
 ```
 
+### Docker Usage
+
+#### Using the convenience script:
+
+```bash
+./docker-run.sh --pr 123
+./docker-run.sh --pr 456 --output-dir ./reviews
+./docker-run.sh --pr 789 --include-comments --include-review-comments
+```
+
+#### Direct Docker commands:
+
+```bash
+# Basic usage
+docker run --rm -v ~/.pr_reviewer_cache:/cache -v $(pwd)/reviews:/app/output --env-file .env local-pr-reviewer --pr 123
+
+# With all options
+docker run --rm \
+  -v ~/.pr_reviewer_cache:/cache \
+  -v $(pwd)/reviews:/app/output \
+  --env-file .env \
+  local-pr-reviewer \
+  --pr 123 \
+  --output-dir /app/output \
+  --include-comments \
+  --include-review-comments
+```
+
 ## Output
 
 The tool generates a `.txt` file containing:
@@ -73,11 +120,22 @@ The tool generates a `.txt` file containing:
 - Diff between PR branch and main branch
 - Formatted for easy reading by ChatGPT
 
+**Default Output Location**: `./reviews/` directory in the project root
+
 ## Repository Management
 
-- **First run**: Repository is cloned to `~/.pr_reviewer_cache/`
+- **First run**: Repository is cloned to cache directory
 - **Subsequent runs**: Repository is updated with latest changes
 - **Cache cleanup**: Use `--clean-cache` to force re-cloning
+- **Docker persistence**: Cache is preserved between container runs
+
+## Docker Benefits
+
+- **Portable**: Works on any OS with Docker
+- **Isolated**: No local Python dependencies required
+- **Disposable**: Clean environment for each run
+- **Persistent**: Repository cache survives container restarts
+- **Shareable**: Easy to share with colleagues
 
 ## Project Structure
 
@@ -90,6 +148,11 @@ pr-reviewer-helper/
 │   ├── git_ops.py       # Git operations and diff generation
 │   └── file_writer.py   # File output formatting
 ├── requirements.txt      # Python dependencies
+├── Dockerfile           # Docker container definition
+├── docker-compose.yml   # Docker Compose configuration
+├── docker-run.sh        # Convenience script for Docker usage
+├── .dockerignore        # Docker build exclusions
+├── reviews/             # Default output directory for review files
 └── README.md           # This file
 ```
 
